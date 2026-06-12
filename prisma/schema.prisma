@@ -1,0 +1,390 @@
+// NeonLink - Complete Prisma Schema
+// Production-ready URL Shortener Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// AUTH ENUMS
+// ─────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+// ─────────────────────────────────────────
+// AD ENUMS
+// ─────────────────────────────────────────
+
+enum AdType {
+  ADSENSE
+  PROPELLERADS
+  MONETAG
+  CUSTOM_HTML
+  BANNER
+  POPUP
+  NATIVE
+}
+
+enum AdPlacement {
+  STEP_1
+  STEP_2
+  STEP_3
+  GLOBAL
+  SIDEBAR
+}
+
+// ─────────────────────────────────────────
+// USERS
+// ─────────────────────────────────────────
+
+model User {
+  id              String     @id @default(cuid())
+  name            String?
+  email           String     @unique
+  emailVerified   DateTime?
+  image           String?
+  password        String?
+  role            Role       @default(USER)
+  plan            Plan       @default(FREE)
+  status          UserStatus @default(ACTIVE)
+  earnings        Float      @default(0)
+  totalLinks      Int        @default(0)
+  totalClicks     Int        @default(0)
+  resetToken      String?    @unique
+  resetExpires    DateTime?
+  verifyToken     String?    @unique
+  twoFactorSecret String?
+  twoFactorEnabled Boolean   @default(false)
+  lastLoginAt     DateTime?
+  lastLoginIp     String?
+  timezone        String     @default("UTC")
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  links        Link[]
+  apiKeys      ApiKey[]
+  accounts     Account[]
+  sessions     Session[]
+  adminLogs    AdminLog[]   @relation("LogUser")
+  adminActions AdminLog[]   @relation("LogActor")
+  notifications Notification[]
+
+  @@index([email])
+  @@index([role])
+  @@index([createdAt])
+}
+
+// NextAuth - Accounts (OAuth providers)
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+// NextAuth - Sessions
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// NextAuth - Verification tokens
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────
+// LINKS
+// ─────────────────────────────────────────
+
+model Link {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  originalUrl String    @db.Text
+  title       String?
+  description String?   @db.Text
+  favicon     String?
+  password    String?
+  expiresAt   DateTime?
+  maxClicks   Int?
+  clickCount  Int       @default(0)
+  uniqueCount Int       @default(0)
+  isActive    Boolean   @default(true)
+  isPublic    Boolean   @default(false)
+  category    String?
+  tags        String[]  @default([])
+  ogImage     String?
+  metaTitle   String?
+  metaDesc    String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  userId  String?
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  clicks  Click[]
+
+  @@index([slug])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([isActive])
+}
+
+// ─────────────────────────────────────────
+// CLICKS / ANALYTICS
+// ─────────────────────────────────────────
+
+model Click {
+  id          String    @id @default(cuid())
+  linkId      String
+  ip          String?
+  country     String?
+  countryCode String?
+  city        String?
+  region      String?
+  continent   String?
+  device      String?   // mobile, desktop, tablet
+  browser     String?
+  browserVersion String?
+  os          String?
+  osVersion   String?
+  referrer    String?   @db.Text
+  referrerDomain String?
+  userAgent   String?   @db.Text
+  language    String?
+  isUnique    Boolean   @default(true)
+  isBot       Boolean   @default(false)
+  step        Int       @default(0)    // 0=direct, 1,2,3=ad steps
+  completedAds Boolean  @default(false)
+  sessionId   String?
+  latitude    Float?
+  longitude   Float?
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  link Link @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId])
+  @@index([createdAt])
+  @@index([country])
+  @@index([device])
+  @@index([isUnique])
+  @@index([isBot])
+}
+
+// ─────────────────────────────────────────
+// ADS
+// ─────────────────────────────────────────
+
+model Ad {
+  id          String      @id @default(cuid())
+  name        String
+  type        AdType
+  code        String      @db.Text
+  placement   AdPlacement
+  isActive    Boolean     @default(true)
+  impressions Int         @default(0)
+  clicks      Int         @default(0)
+  revenue     Float       @default(0)
+  priority    Int         @default(0)
+  notes       String?     @db.Text
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([placement])
+  @@index([isActive])
+}
+
+// ─────────────────────────────────────────
+// SETTINGS
+// ─────────────────────────────────────────
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String   @db.Text
+  group     String   @default("general")
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+  @@index([group])
+}
+
+// ─────────────────────────────────────────
+// API KEYS
+// ─────────────────────────────────────────
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  name        String
+  key         String    @unique
+  prefix      String
+  userId      String
+  isActive    Boolean   @default(true)
+  permissions String[]  @default(["read"])
+  usageCount  Int       @default(0)
+  rateLimit   Int       @default(1000)
+  lastUsed    DateTime?
+  expiresAt   DateTime?
+  ipWhitelist String[]  @default([])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────
+// ADMIN LOGS
+// ─────────────────────────────────────────
+
+model AdminLog {
+  id        String   @id @default(cuid())
+  actorId   String
+  userId    String?
+  action    String
+  resource  String?
+  details   String?  @db.Text
+  ip        String?
+  userAgent String?
+  before    String?  @db.Text  // JSON snapshot
+  after     String?  @db.Text  // JSON snapshot
+  createdAt DateTime @default(now())
+
+  actor User  @relation("LogActor", fields: [actorId], references: [id])
+  user  User? @relation("LogUser", fields: [userId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String   @db.Text
+  type      String   @default("info")  // info, success, warning, error
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+// ─────────────────────────────────────────
+// LINK CATEGORIES
+// ─────────────────────────────────────────
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  color       String?
+  icon        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────
+// PAYMENT / EARNINGS (Placeholder for future)
+// ─────────────────────────────────────────
+
+model Payment {
+  id          String   @id @default(cuid())
+  userId      String
+  amount      Float
+  currency    String   @default("USD")
+  method      String
+  status      String   @default("pending")  // pending, completed, failed
+  txId        String?  @unique
+  notes       String?
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────
+// REDIRECT SESSIONS (Anti-bypass)
+// ─────────────────────────────────────────
+
+model RedirectSession {
+  id          String   @id @default(cuid())
+  sessionKey  String   @unique
+  linkId      String
+  currentStep Int      @default(1)
+  completedAt DateTime?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([sessionKey])
+  @@index([linkId])
+  @@index([expiresAt])
+}
